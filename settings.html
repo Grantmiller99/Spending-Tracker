@@ -244,7 +244,6 @@
         
         <div class="sidebar">
             <div class="sidebar-logo"><i class="fas fa-coins"></i> Owen's Tracker</div>
-            <!-- Update the active class depending on which page you paste this into -->
             <a href="dashboard.html" class="sidebar-menu-item"><i class="fas fa-th-large"></i> Dashboard</a>
             <a href="entries.html" class="sidebar-menu-item"><i class="fas fa-list"></i> Entries</a>
             <a href="grocery.html" class="sidebar-menu-item"><i class="fas fa-shopping-cart"></i> Groceries</a>
@@ -372,17 +371,20 @@
             currencySelect.value = db.settings.currency;
         }
 
-        pctInput.addEventListener('change', () => {
-            db = TrackerStore.updateSetting('spending_percentage',
-                Number(pctInput.value) || db.settings.spending_percentage);
-        });
-        limitInput.addEventListener('change', () => {
-            db = TrackerStore.updateSetting('weekly_grocery_limit',
-                Number(limitInput.value) || db.settings.weekly_grocery_limit);
-        });
-        currencySelect.addEventListener('change', () => {
-            db = TrackerStore.updateSetting('currency', currencySelect.value);
-        });
+        // The store clamps out-of-range values, then the form reloads to show
+        // what was actually saved rather than what was typed.
+        function applySetting(key, value) {
+            try {
+                db = TrackerStore.updateSetting(key, value);
+            } catch (err) {
+                alert(err.message);
+            }
+            loadSettingsIntoForm();
+        }
+
+        pctInput.addEventListener('change', () => applySetting('spending_percentage', pctInput.value));
+        limitInput.addEventListener('change', () => applySetting('weekly_grocery_limit', limitInput.value));
+        currencySelect.addEventListener('change', () => applySetting('currency', currencySelect.value));
 
         // Stay in sync if another tab clears or imports data
         TrackerStore.subscribe(function (fresh) {
@@ -390,12 +392,21 @@
             loadSettingsIntoForm();
         });
 
+        TrackerStore.markActiveNav();
         loadSettingsIntoForm();
     </script>
     <script>
         // 1. Export Data - downloads everything currently in localStorage
         function exportData() {
-            TrackerStore.exportToFile();
+            try {
+                const n = TrackerStore.exportToFile();
+                if (n.total === 0) {
+                    alert("There is nothing to export yet - the tracker is empty.");
+                }
+            } catch (err) {
+                alert("Could not export your data: " + err.message);
+                console.error("Export error:", err);
+            }
         }
 
         // 2. Import Data - replaces localStorage with the contents of a backup file
@@ -410,14 +421,27 @@
 
             const reader = new FileReader();
 
+            reader.onerror = function () {
+                alert("Could not read that file. Please try again.");
+                document.getElementById('importFile').value = "";
+            };
+
             reader.onload = function (e) {
                 try {
-                    db = TrackerStore.importFromJSON(e.target.result);
+                    const result = TrackerStore.importFromJSON(e.target.result);
+                    db = result.db;
                     loadSettingsIntoForm();
-                    const count = db.income_entries.length + db.spend_entries.length + db.grocery_entries.length;
-                    alert("Backup imported successfully - " + count + " entries restored.");
+
+                    const n = TrackerStore.counts(db);
+                    let message = "Backup imported - " + result.imported + " entries restored " +
+                        "(" + n.income + " paycheck, " + n.spend + " spend, " + n.grocery + " grocery).";
+                    if (result.skipped > 0) {
+                        message += "\n\n" + result.skipped + " entr" + (result.skipped === 1 ? "y was" : "ies were") +
+                            " skipped because of a missing or invalid date or amount.";
+                    }
+                    alert(message);
                 } catch (error) {
-                    alert("Error importing file. Please ensure it is a valid JSON backup.");
+                    alert("Import failed. " + error.message);
                     console.error("Import error:", error);
                 } finally {
                     // Reset the file input so the same file can be picked again
@@ -430,11 +454,22 @@
 
         // 3. Clear Data - wipes the stored entries and settings
         function clearData() {
-            if (confirm("Are you entirely sure you want to clear all data? This cannot be undone unless you have a backup.")) {
-                db = TrackerStore.clear();
-                loadSettingsIntoForm();
-                alert("All local data has been cleared.");
+            const n = TrackerStore.counts(TrackerStore.load());
+            if (n.total === 0) {
+                alert("There is no data to clear - the tracker is already empty.");
+                return;
             }
+            const detail = n.income + " paycheck, " + n.spend + " spend and " + n.grocery + " grocery entries";
+            if (!confirm("Delete " + detail + "? This cannot be undone unless you have a backup.")) return;
+
+            try {
+                db = TrackerStore.clear();
+            } catch (err) {
+                alert(err.message);
+                return;
+            }
+            loadSettingsIntoForm();
+            alert("All local data has been cleared.");
         }
     </script>
 

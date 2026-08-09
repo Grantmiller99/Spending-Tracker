@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Groceries - Advanced Dashboard</title>
+    <title>Groceries - Owen's Spending Tracker</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     <style>
         :root {
@@ -253,7 +253,6 @@
         
         <div class="sidebar">
             <div class="sidebar-logo"><i class="fas fa-coins"></i> Owen's Tracker</div>
-            <!-- Update the active class depending on which page you paste this into -->
             <a href="dashboard.html" class="sidebar-menu-item"><i class="fas fa-th-large"></i> Dashboard</a>
             <a href="entries.html" class="sidebar-menu-item"><i class="fas fa-list"></i> Entries</a>
             <a href="grocery.html" class="sidebar-menu-item"><i class="fas fa-shopping-cart"></i> Groceries</a>
@@ -268,7 +267,7 @@
             <div class="main-dashboard-content">
                 
                 <div class="header">
-                    <h1>2027 Grocery Tracker</h1>
+                    <h1>Grocery Tracker</h1>
                 </div>
 
                 <div class="panels-grid">
@@ -280,7 +279,7 @@
                         
                         <form class="input-group" id="grocery-form">
                             <input type="date" id="gro-date" required>
-                            <input type="number" id="gro-amount" placeholder="Total Bill ($)" step="0.01" required>
+                            <input type="number" id="gro-amount" placeholder="Total Bill ($)" step="0.01" min="0.01" required>
                             <input type="text" id="gro-notes" placeholder="Notes (e.g., Week 1, Walmart, bulk rice)" required>
                             <button type="submit" class="neon-btn"><i class="fas fa-plus"></i> Add Bill</button>
                         </form>
@@ -308,14 +307,18 @@
     <script src="store.js"></script>
     <script>
         let db = TrackerStore.load();
-        const moneyFormatter = TrackerStore.formatter(db);
-        const groceryLimit = db.settings.weekly_grocery_limit;
+        let moneyFormatter = TrackerStore.formatter(db);
+
+        TrackerStore.markActiveNav();
 
         function renderGroceries() {
+            moneyFormatter = TrackerStore.formatter(db);
+            const groceryLimit = db.settings.weekly_grocery_limit;
             const tbody = document.getElementById('grocery-table-body');
             tbody.innerHTML = '';
 
-            const rows = [...db.grocery_entries].sort((a, b) => new Date(b.date) - new Date(a.date));
+            const rows = [...db.grocery_entries]
+                .sort((a, b) => TrackerStore.parseDate(b.date) - TrackerStore.parseDate(a.date));
 
             if (rows.length === 0) {
                 const tr = document.createElement('tr');
@@ -345,7 +348,12 @@
                 btn.innerHTML = '<i class="fas fa-trash"></i>';
                 btn.addEventListener('click', () => {
                     if (!confirm("Are you sure you want to delete this grocery entry?")) return;
-                    db = TrackerStore.deleteEntry(db, 'grocery', entry);
+                    try {
+                        db = TrackerStore.deleteEntry('grocery', entry.id);
+                    } catch (err) {
+                        alert(err.message);
+                        return;
+                    }
                     renderGroceries();
                 });
                 actionCell.appendChild(btn);
@@ -360,11 +368,16 @@
 
         document.getElementById('grocery-form').addEventListener('submit', function (e) {
             e.preventDefault();
-            db = TrackerStore.addEntry(db, 'grocery', {
-                date: document.getElementById('gro-date').value,
-                amount: document.getElementById('gro-amount').value,
-                notes: document.getElementById('gro-notes').value
-            });
+            try {
+                db = TrackerStore.addEntry('grocery', {
+                    date: document.getElementById('gro-date').value,
+                    amount: document.getElementById('gro-amount').value,
+                    notes: document.getElementById('gro-notes').value
+                });
+            } catch (err) {
+                alert(err.message);
+                return;
+            }
             this.reset();
             renderGroceries();
         });

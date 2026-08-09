@@ -428,7 +428,7 @@
                         
                         <form class="input-group" id="income-form">
                             <input type="date" id="inc-date" required>
-                            <input type="number" id="inc-amount" placeholder="Actual Pay ($)" step="0.01" required>
+                            <input type="number" id="inc-amount" placeholder="Actual Pay ($)" step="0.01" min="0.01" required>
                             <input type="text" id="inc-notes" placeholder="Notes (e.g. Week 1)" required>
                             <button type="submit" class="neon-btn"><i class="fas fa-plus"></i></button>
                         </form>
@@ -455,7 +455,7 @@
 
                         <form class="input-group" id="spend-form">
                             <input type="date" id="spd-date" required>
-                            <input type="number" id="spd-amount" placeholder="Amount ($)" step="0.01" required>
+                            <input type="number" id="spd-amount" placeholder="Amount ($)" step="0.01" min="0.01" required>
                             <input type="text" id="spd-notes" placeholder="Item / Vendor" required>
                             <button type="submit" class="neon-btn"><i class="fas fa-plus"></i></button>
                         </form>
@@ -482,49 +482,37 @@
     <script>
         let db = TrackerStore.load();
 
-        const SPENDING_PERCENTAGE = db.settings.spending_percentage / 100;
-        const WEEKLY_GROCERY_LIMIT = db.settings.weekly_grocery_limit;
-
         let spendingChartInstance = null;
         let groceryChartInstance = null;
 
-        // Utility formatter
-        const moneyFormatter = TrackerStore.formatter(db);
+        // Utility formatter - rebuilt on change so a currency switch takes effect
+        let moneyFormatter = TrackerStore.formatter(db);
+
+        TrackerStore.markActiveNav();
 
         function updateDashboard() {
-            // 1. Calculate Totals
-            let totalEarned = db.income_entries.reduce((sum, entry) => sum + parseFloat(entry.amount), 0);
-            let totalSpent = db.spend_entries.reduce((sum, entry) => sum + parseFloat(entry.amount), 0);
-            
-            // To match the original logic, add total grocery to total spent? 
-            let totalGrocery = db.grocery_entries.reduce((sum, entry) => sum + parseFloat(entry.amount), 0);
-            let absoluteTotalSpent = totalSpent + totalGrocery; 
+            moneyFormatter = TrackerStore.formatter(db);
 
-            let spendingAllowance = totalEarned * SPENDING_PERCENTAGE;
-            let amountRemaining = spendingAllowance - absoluteTotalSpent;
-            let totalSaved = totalEarned - spendingAllowance; // The 65%
-
-            // Calculate Grocery limits (Grab the most recent week for 'This Week')
-            let thisWeekGrocerySpend = 0;
-            if (db.grocery_entries.length > 0) {
-                // Assuming last entry is current week
-                thisWeekGrocerySpend = parseFloat(db.grocery_entries[db.grocery_entries.length - 1].amount);
-            }
-            let groceryLeft = WEEKLY_GROCERY_LIMIT - thisWeekGrocerySpend;
+            // 1. Totals come from the shared store so every page agrees
+            const totals = TrackerStore.summary(db);
 
             // 2. Update Summary DOM Elements
-            document.getElementById('val-earned').textContent = moneyFormatter.format(totalEarned);
-            document.getElementById('val-spent').textContent = moneyFormatter.format(absoluteTotalSpent);
-            document.getElementById('val-allowance').textContent = moneyFormatter.format(spendingAllowance);
+            document.getElementById('val-earned').textContent = moneyFormatter.format(totals.earned);
+            document.getElementById('val-spent').textContent = moneyFormatter.format(totals.totalSpent);
+            document.getElementById('val-allowance').textContent = moneyFormatter.format(totals.allowance);
             document.getElementById('label-allowance').textContent =
                 'Spending Money (' + db.settings.spending_percentage + '%)';
-            
+
             const remainingEl = document.getElementById('val-remaining');
-            remainingEl.textContent = moneyFormatter.format(amountRemaining);
-            remainingEl.className = 'amount ' + (amountRemaining >= 0 ? 'text-green' : 'text-red');
-            
-            document.getElementById('val-saved').textContent = moneyFormatter.format(totalSaved);
-            document.getElementById('val-grocery-left').textContent = moneyFormatter.format(groceryLeft);
+            remainingEl.textContent = moneyFormatter.format(totals.remaining);
+            remainingEl.className = 'amount ' + (totals.remaining >= 0 ? 'text-green' : 'text-red');
+
+            document.getElementById('val-saved').textContent = moneyFormatter.format(totals.saved);
+
+            const groceryLeftEl = document.getElementById('val-grocery-left');
+            groceryLeftEl.textContent = moneyFormatter.format(totals.groceryLeft);
+            // Keeps its usual yellow, but goes red once the weekly limit is blown
+            groceryLeftEl.className = 'amount ' + (totals.groceryLeft >= 0 ? 'text-yellow' : 'text-red');
 
             // 3. Render Tables (Limit to 5 most recent for dashboard)
             renderTable('income-table-body', db.income_entries, 'income');
@@ -539,7 +527,9 @@
             tbody.innerHTML = '';
             
             // Sort by date descending and take top 5
-            const sorted = [...dataArray].sort((a, b) => new Date(b.date) - new Date(a.date)).slice(0, 5);
+            const sorted = [...dataArray]
+                .sort((a, b) => TrackerStore.parseDate(b.date) - TrackerStore.parseDate(a.date))
+                .slice(0, 5);
 
             if (sorted.length === 0) {
                 const tr = document.createElement('tr');
@@ -568,7 +558,7 @@
                 const btn = document.createElement('button');
                 btn.className = 'delete-btn';
                 btn.innerHTML = '<i class="fas fa-trash"></i>';
-                btn.addEventListener('click', () => deleteEntry(typeStr, entry));
+                btn.addEventListener('click', () => deleteEntry(typeStr, entry.id));
                 actionCell.appendChild(btn);
 
                 tr.appendChild(infoCell);
@@ -578,31 +568,46 @@
             });
         }
 
-        function deleteEntry(type, entry) {
+        function deleteEntry(type, id) {
             if (!confirm("Remove this entry?")) return;
-            db = TrackerStore.deleteEntry(db, type, entry);
+            try {
+                db = TrackerStore.deleteEntry(type, id);
+            } catch (err) {
+                alert(err.message);
+                return;
+            }
             updateDashboard();
         }
 
         // Handle Forms
         document.getElementById('income-form').addEventListener('submit', function(e) {
             e.preventDefault();
-            db = TrackerStore.addEntry(db, 'income', {
-                date: document.getElementById('inc-date').value,
-                amount: document.getElementById('inc-amount').value,
-                notes: document.getElementById('inc-notes').value
-            });
+            try {
+                db = TrackerStore.addEntry('income', {
+                    date: document.getElementById('inc-date').value,
+                    amount: document.getElementById('inc-amount').value,
+                    notes: document.getElementById('inc-notes').value
+                });
+            } catch (err) {
+                alert(err.message);
+                return;
+            }
             this.reset();
             updateDashboard();
         });
 
         document.getElementById('spend-form').addEventListener('submit', function(e) {
             e.preventDefault();
-            db = TrackerStore.addEntry(db, 'spend', {
-                date: document.getElementById('spd-date').value,
-                amount: document.getElementById('spd-amount').value,
-                notes: document.getElementById('spd-notes').value
-            });
+            try {
+                db = TrackerStore.addEntry('spend', {
+                    date: document.getElementById('spd-date').value,
+                    amount: document.getElementById('spd-amount').value,
+                    notes: document.getElementById('spd-notes').value
+                });
+            } catch (err) {
+                alert(err.message);
+                return;
+            }
             this.reset();
             updateDashboard();
         });
@@ -611,16 +616,17 @@
         function updateCharts() {
             // -- Cumulative Chart --
             // Combine all spending (spend + grocery), sort by date, calculate cumulative
-            let allSpending = [...db.spend_entries, ...db.grocery_entries].sort((a, b) => new Date(a.date) - new Date(b.date));
-            
+            let allSpending = [...db.spend_entries, ...db.grocery_entries]
+                .sort((a, b) => TrackerStore.parseDate(a.date) - TrackerStore.parseDate(b.date));
+
             let cumulativeData = [];
             let cumulativeLabels = [];
             let currentTotal = 0;
 
-            allSpending.forEach((entry, idx) => {
-                currentTotal += parseFloat(entry.amount);
+            allSpending.forEach((entry) => {
+                currentTotal += entry.amount;
                 cumulativeData.push(currentTotal);
-                cumulativeLabels.push(entry.notes);
+                cumulativeLabels.push(entry.notes || entry.date);
             });
 
             if (spendingChartInstance) spendingChartInstance.destroy();
@@ -660,14 +666,12 @@
             });
 
             // -- Grocery Bar Chart --
-            // Take the last 4 weeks of grocery entries
-            let lastGroceries = db.grocery_entries.slice(-4);
-            let groceryData = lastGroceries.map(g => parseFloat(g.amount));
-            let groceryLabels = lastGroceries.map((g, idx) => {
-                if (idx === lastGroceries.length - 1) return "This Week";
-                return "Wk " + (idx + 1);
-            });
-            let limitData = lastGroceries.map(() => WEEKLY_GROCERY_LIMIT);
+            // Real calendar weeks, so a back-dated bill lands in the week it belongs to
+            const weeks = TrackerStore.groceryByWeek(db, 4);
+            const groceryLimit = db.settings.weekly_grocery_limit;
+            let groceryData = weeks.map(w => w.total);
+            let groceryLabels = weeks.map(w => w.label);
+            let limitData = weeks.map(() => groceryLimit);
 
             if (groceryChartInstance) groceryChartInstance.destroy();
 
@@ -679,7 +683,7 @@
                     datasets: [
                         {
                             type: 'line',
-                            label: 'Limit ($' + WEEKLY_GROCERY_LIMIT + ')',
+                            label: 'Limit (' + moneyFormatter.format(groceryLimit) + ')',
                             data: limitData,
                             borderColor: '#F87171',
                             borderWidth: 2,
@@ -694,7 +698,7 @@
                             data: groceryData,
                             backgroundColor: function(context) {
                                 const val = context.dataset.data[context.dataIndex];
-                                return val > WEEKLY_GROCERY_LIMIT ? 'rgba(248, 113, 113, 0.9)' : 'rgba(74, 222, 128, 0.8)';
+                                return val > groceryLimit ? 'rgba(248, 113, 113, 0.9)' : 'rgba(74, 222, 128, 0.8)';
                             },
                             borderRadius: 4,
                             order: 2

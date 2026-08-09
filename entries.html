@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Entries - Advanced Dashboard</title>
+    <title>Entries - Owen's Spending Tracker</title>
     <!-- Include FontAwesome for icons -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     <style>
@@ -269,7 +269,6 @@
         
         <div class="sidebar">
             <div class="sidebar-logo"><i class="fas fa-coins"></i> Owen's Tracker</div>
-            <!-- Update the active class depending on which page you paste this into -->
             <a href="dashboard.html" class="sidebar-menu-item"><i class="fas fa-th-large"></i> Dashboard</a>
             <a href="entries.html" class="sidebar-menu-item"><i class="fas fa-list"></i> Entries</a>
             <a href="grocery.html" class="sidebar-menu-item"><i class="fas fa-shopping-cart"></i> Groceries</a>
@@ -297,7 +296,7 @@
                         
                         <form class="input-group" id="income-form">
                             <input type="date" id="inc-date" required>
-                            <input type="number" id="inc-amount" placeholder="Amount ($)" step="0.01" required>
+                            <input type="number" id="inc-amount" placeholder="Amount ($)" step="0.01" min="0.01" required>
                             <input type="text" id="inc-notes" placeholder="Notes (e.g., Week 1, Drive)" required>
                             <button type="submit" class="neon-btn"><i class="fas fa-plus"></i></button>
                         </form>
@@ -325,7 +324,7 @@
 
                         <form class="input-group" id="spend-form">
                             <input type="date" id="spd-date" required>
-                            <input type="number" id="spd-amount" placeholder="Amount ($)" step="0.01" required>
+                            <input type="number" id="spd-amount" placeholder="Amount ($)" step="0.01" min="0.01" required>
                             <input type="text" id="spd-notes" placeholder="Notes (e.g., Item / Vendor)" required>
                             <button type="submit" class="neon-btn"><i class="fas fa-plus"></i></button>
                         </form>
@@ -352,13 +351,16 @@
     <script src="store.js"></script>
     <script>
         let db = TrackerStore.load();
-        const moneyFormatter = TrackerStore.formatter(db);
+        let moneyFormatter = TrackerStore.formatter(db);
+
+        TrackerStore.markActiveNav();
 
         function renderTable(tbodyId, type, amountStyle) {
             const tbody = document.getElementById(tbodyId);
             tbody.innerHTML = '';
 
-            const rows = [...db[type + '_entries']].sort((a, b) => new Date(b.date) - new Date(a.date));
+            const rows = [...db[type + '_entries']]
+                .sort((a, b) => TrackerStore.parseDate(b.date) - TrackerStore.parseDate(a.date));
 
             if (rows.length === 0) {
                 const tr = document.createElement('tr');
@@ -386,7 +388,12 @@
                 btn.innerHTML = '<i class="fas fa-trash"></i>';
                 btn.addEventListener('click', () => {
                     if (!confirm("Are you sure you want to delete this entry?")) return;
-                    db = TrackerStore.deleteEntry(db, type, entry);
+                    try {
+                        db = TrackerStore.deleteEntry(type, entry.id);
+                    } catch (err) {
+                        alert(err.message);
+                        return;
+                    }
                     renderAll();
                 });
                 actionCell.appendChild(btn);
@@ -400,31 +407,31 @@
         }
 
         function renderAll() {
+            moneyFormatter = TrackerStore.formatter(db);
             renderTable('income-table-body', 'income', 'color: var(--accent-green); font-weight: 600;');
             renderTable('spend-table-body', 'spend', '');
         }
 
-        document.getElementById('income-form').addEventListener('submit', function (e) {
-            e.preventDefault();
-            db = TrackerStore.addEntry(db, 'income', {
-                date: document.getElementById('inc-date').value,
-                amount: document.getElementById('inc-amount').value,
-                notes: document.getElementById('inc-notes').value
+        function wireForm(formId, type, fieldPrefix) {
+            document.getElementById(formId).addEventListener('submit', function (e) {
+                e.preventDefault();
+                try {
+                    db = TrackerStore.addEntry(type, {
+                        date: document.getElementById(fieldPrefix + '-date').value,
+                        amount: document.getElementById(fieldPrefix + '-amount').value,
+                        notes: document.getElementById(fieldPrefix + '-notes').value
+                    });
+                } catch (err) {
+                    alert(err.message);
+                    return;
+                }
+                this.reset();
+                renderAll();
             });
-            this.reset();
-            renderAll();
-        });
+        }
 
-        document.getElementById('spend-form').addEventListener('submit', function (e) {
-            e.preventDefault();
-            db = TrackerStore.addEntry(db, 'spend', {
-                date: document.getElementById('spd-date').value,
-                amount: document.getElementById('spd-amount').value,
-                notes: document.getElementById('spd-notes').value
-            });
-            this.reset();
-            renderAll();
-        });
+        wireForm('income-form', 'income', 'inc');
+        wireForm('spend-form', 'spend', 'spd');
 
         // Stay in sync if another tab clears or imports data
         TrackerStore.subscribe(function (fresh) {
